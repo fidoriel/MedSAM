@@ -4,7 +4,7 @@ from PIL import Image
 
 import torch
 from segment_anything import sam_model_registry
-from skimage import io, transform
+from skimage import transform
 import torch.nn.functional as F
 from typing import Tuple, Optional
 from transformers import CLIPTokenizer, CLIPTextModel
@@ -58,7 +58,7 @@ def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None
 
 def generate_image_embedding(image_path: str, medsam_model: torch.nn.Module, device: torch.device) -> (torch.Tensor, int, int):
     print(f"Loading image from {image_path}")
-    img_np = io.imread(image_path)
+    img_np = np.array(Image.open(image_path).convert("RGB"))
     if len(img_np.shape) == 2:
         img_3c = np.repeat(img_np[:, :, None], 3, axis=-1)
     else:
@@ -91,7 +91,7 @@ def generate_box_prompt_embedding(medsam_model: torch.nn.Module,box: list[int], 
     # transfer box_np t0 1024x1024 scale
     box_1024 = box_np / np.array([width, height, width, height]) * 1024
 
-    box_torch = torch.as_tensor(box_1024, dtype=torch.float, device=img_embed.device)
+    box_torch = torch.as_tensor(box_1024, dtype=torch.float, device=medsam_model.device)
     if len(box_torch.shape) == 2:
         box_torch = box_torch[:, None, :]  # (B, 1, 4)
 
@@ -337,7 +337,7 @@ def main():
     # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
     seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
     mask = mask_image(path="assets/mask_out.png", mask=seg, save_image=True)
-    overlay_mask(pil_mask=mask, image_path="assets/img_demo.png", output_path="assets/overlay_out.png", save_image=True)
+    overlay_mask(pil_mask=mask, image_path="assets/img_demo.png", output_path="assets/overlay_out2.png", save_image=True)
 
 
 if __name__ == "__main__":
