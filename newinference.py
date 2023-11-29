@@ -37,16 +37,31 @@ def mask_image(mask: np.ndarray, path: str | None = None, save_image: bool = Fal
 
 def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None = None,  save_image: bool = False) -> Image.Image:
     print(f"Saving overlayed mask image to {output_path}")
-    original_image = Image.open(image_path).convert("RGBA")
+    original_image = Image.open(image_path)
+    print(f"Original image size: {original_image.size} pixels {original_image.mode} mode")
 
-    # Ensure the mask is in 'RGBA' mode
+
+    # it is likely that some modes will break the code, and need to be added if they do
+    if original_image.mode == "L":
+        print(f"Before conversion {original_image.mode} mode")
+        original_image = Image.merge("RGB", [original_image]*3)
+        original_image.putalpha(255)
+    elif original_image.mode in ["I", "I;16", "I;32"]:
+        print(f"Before conversion {original_image.mode} mode")
+        max_val = max(original_image.getextrema())
+        scale_factor = 255.0 / max_val
+        scaled_image = original_image.point(lambda i: i * scale_factor)
+        original_image = scaled_image.convert('L').convert('RGBA')
+    else:
+        original_image = original_image.convert("RGBA")
+    
+    print(f"After conversion {original_image.mode} mode")
+
     mask_image = pil_mask.convert("RGBA")
 
-    # Resize mask to match the original image size if they differ
     if mask_image.size != original_image.size:
         mask_image = mask_image.resize(original_image.size)
 
-    # Overlay the mask on the original image
     combined_image = Image.alpha_composite(original_image, mask_image)
 
     if save_image:
@@ -339,7 +354,23 @@ def main():
     mask = mask_image(path="assets/mask_out.png", mask=seg, save_image=True)
     overlay_mask(pil_mask=mask, image_path="assets/img_demo.png", output_path="assets/overlay_out2.png", save_image=True)
 
+# def batch():
+#     import os
+#     device = select_device()
+#     model = load_model(device=device, prompt_type="box")
+#     directory = "../NeAT/scenes/Pepper/projections/"
+#     for file in os.listdir(directory):
+#         if os.path.isdir(directory + file):
+#             continue
+#         print(f"----------\nProcessing {file}")
+#         img_embed, height, width = generate_image_embedding(image_path = directory + file, medsam_model=model, device=device)
+#         sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[654, 385, 1150, 875], width=width, height=height)
+#         # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
+#         seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
+#         mask = mask_image(mask=seg)
+#         overlay_mask(pil_mask=mask, image_path=directory + file, output_path= directory + "/out/" + file + "segmented.tif", save_image=True)
 
 if __name__ == "__main__":
+    # batch()
     main()
 
