@@ -190,14 +190,14 @@ class Window(QWidget):
 
     def load_image(self):
         file_path, file_type = QFileDialog.getOpenFileName(
-            self, "Choose Image to Segment", ".", "Image Files (*.png *.jpg *.bmp)"
+            self, "Choose Image to Segment", ".", "Image Files (*.tif *.png *.jpg *.bmp)"
         )
 
         if file_path is None or len(file_path) == 0:
             print("No image path specified, plz select an image")
             exit()
 
-        img_np = io.imread(file_path)
+        img_np = np.array(Image.open(file_path))
         if len(img_np.shape) == 2:
             img_3c = np.repeat(img_np[:, :, None], 3, axis=-1)
         else:
@@ -276,7 +276,7 @@ class Window(QWidget):
 
         H, W, _ = self.img_3c.shape
         box_np = np.array([[xmin, ymin, xmax, ymax]])
-        # print("bounding box:", box_np)
+        print("bounding box:", box_np)
         box_1024 = box_np / np.array([W, H, W, H]) * 1024
 
         sam_mask = medsam_inference(medsam_model, self.embedding, box_1024, H, W)
