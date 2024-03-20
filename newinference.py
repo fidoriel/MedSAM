@@ -13,22 +13,47 @@ from segment_anything.modeling import PromptEncoder
 
 # %% universal pre and post processing functions
 
+
+def convert_rgba_to_translucent_white(rgba_image):
+    # Create a new I;16 image with the same dimensions
+    width, height = rgba_image.size
+    i16_image = Image.new("I;16", (width, height))
+
+    # Iterate over each pixel
+    for x in range(width):
+        for y in range(height):
+            # Get the RGBA value of the current pixel
+            r, g, b, a = rgba_image.getpixel((x, y))
+
+            if a == 0:
+                new_value = 65535
+            else:
+                # Compute the grayscale value using luminosity method
+                grayscale = int(0.299 * r + 0.587 * g + 0.114 * b)
+                # Scale the grayscale value to 16-bit
+                new_value = grayscale * 256
+
+            i16_image.putpixel((x, y), new_value)
+
+    return i16_image
+
 def select_device(device: str | None = None) -> torch.device:
     if device is None:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     return torch.device(device)
 
-def mask_image(mask: np.ndarray, path: str | None = None, save_image: bool = False, rgb: list [int] = [200, 200, 30]) -> Image.Image:
+def mask_image(mask: np.ndarray, path: str | None = None, save_image: bool = False, rgb: list [int] = [50, 50, 0]) -> Image.Image:
     print(f"Saving mask image to {path}")
-    color = np.array(rgb + [70])
+    color = np.array(rgb + [120])
     h, w = mask.shape
     mask_image = np.zeros((h, w, 4), dtype=np.uint8)
     for i in range(3):  # Apply color to RGB channels
         mask_image[:, :, i] = mask * color[i]
     mask_image[:, :, 3] = mask * color[3]  # Apply alpha channel
 
-    img = Image.fromarray(mask_image, 'RGBA')  # Create a PIL image
+    img = convert_rgba_to_translucent_white(Image.fromarray(mask_image, 'RGBA'))
+
     if save_image:
         if path is None:
             raise ValueError("Path cannot be None if save_image is True")
@@ -54,8 +79,6 @@ def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None
         original_image = scaled_image.convert('L').convert('RGBA')
     else:
         original_image = original_image.convert("RGBA")
-    
-    print(f"After conversion {original_image.mode} mode")
 
     mask_image = pil_mask.convert("RGBA")
 
@@ -63,12 +86,19 @@ def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None
         mask_image = mask_image.resize(original_image.size)
 
     combined_image = Image.alpha_composite(original_image, mask_image)
+    combined_image = combined_image.convert("L")
+
+    grayscale_array_8bit = np.array(combined_image)
+    grayscale_array_16bit = (grayscale_array_8bit.astype(np.uint16)) * 256
+    grayscale_image_16bit = Image.fromarray(grayscale_array_16bit, mode='I;16')
+
+    print(f"After conversion {grayscale_image_16bit.mode} mode")
 
     if save_image:
         if output_path is None:
             raise ValueError("image_path cannot be None if save_image is True")
-        combined_image.save(output_path)
-    return combined_image
+        grayscale_image_16bit.save(output_path)
+    return grayscale_image_16bit
 
 
 def generate_image_embedding(image_path: str, medsam_model: torch.nn.Module, device: torch.device) -> (torch.Tensor, int, int):
@@ -354,23 +384,27 @@ def main():
     mask = mask_image(path="assets/mask_out.png", mask=seg, save_image=True)
     overlay_mask(pil_mask=mask, image_path="assets/img_demo.png", output_path="assets/overlay_out2.png", save_image=True)
 
-# def batch():
-#     import os
-#     device = select_device()
-#     model = load_model(device=device, prompt_type="box")
-#     directory = "../NeAT/scenes/Pepper/projections/"
-#     for file in os.listdir(directory):
-#         if os.path.isdir(directory + file):
-#             continue
-#         print(f"----------\nProcessing {file}")
-#         img_embed, height, width = generate_image_embedding(image_path = directory + file, medsam_model=model, device=device)
-#         sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[654, 385, 1150, 875], width=width, height=height)
-#         # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
-#         seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
-#         mask = mask_image(mask=seg)
-#         overlay_mask(pil_mask=mask, image_path=directory + file, output_path= directory + "/out/" + file + "segmented.tif", save_image=True)
+def batch():
+    import os
+    device = select_device()
+    model = load_model(device=device, prompt_type="box")
+    directory = "../neat/scenes/Pepper/projections/"
+    for file in sorted(os.listdir(directory)):
+        if os.path.isdir(directory + file):
+            continue
+        print(f"----------\nProcessing {file}")
+        img_embed, height, width = generate_image_embedding(image_path = directory + file, medsam_model=model, device=device)
+        sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[654, 385, 1150, 875], width=width, height=height)
+        # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
+        seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
+
+        out_path = directory + "/out/"
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
+        # mask = mask_image(mask=seg,path= out_path + file + "segmented.tif", save_image=True)
+        # overlay_mask(pil_mask=mask, image_path=directory + file)
 
 if __name__ == "__main__":
-    # batch()
-    main()
+    batch()
+    # main()
 
