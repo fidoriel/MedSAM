@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+from hmac import new
 import numpy as np
 from PIL import Image
+from matplotlib import pyplot as plt
 
 import torch
 from segment_anything import sam_model_registry
@@ -103,7 +105,8 @@ def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None
 
 def generate_image_embedding(image_path: str, medsam_model: torch.nn.Module, device: torch.device) -> (torch.Tensor, int, int):
     print(f"Loading image from {image_path}")
-    img_np = np.array(Image.open(image_path).convert("RGB"))
+    rgb = Image.open(image_path)
+    img_np = np.array(rgb)
     if len(img_np.shape) == 2:
         img_3c = np.repeat(img_np[:, :, None], 3, axis=-1)
     else:
@@ -377,34 +380,68 @@ def load_model(device: torch.device, prompt_type: str, checkpoint: str = "work_d
 def main():
     device = select_device()
     model = load_model(device=device, prompt_type="box")
-    img_embed, height, width = generate_image_embedding(image_path = "assets/img_demo.png", medsam_model=model, device=device)
-    sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[95, 255, 190, 350], width=width, height=height)
+    input_img = "assets/img_demo.png"
+    img_embed, height, width = generate_image_embedding(image_path = input_img, medsam_model=model, device=device)
+    sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[101.0, 262.0, 196.0, 341.0], width=width, height=height)
     # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
     seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
-    mask = mask_image(path="assets/mask_out.png", mask=seg, save_image=True)
-    overlay_mask(pil_mask=mask, image_path="assets/img_demo.png", output_path="assets/overlay_out2.png", save_image=True)
+    mask = mask_image(path="mask_out.png", mask=seg, save_image=True)
+    overlay_mask(pil_mask=mask, image_path=input_img, output_path="mask_img_out.png", save_image=True)
+
+def transition(num_image: int, box1: list[int, int, int, int], box2: list[int, int, int, int]) -> list[list[int, int, int, int]]:
+    if num_image < 2:
+        raise ValueError(f"Number of images {num_image} must be greater than 2")
+    
+    new_boxes = []
+    for i in range(int(num_image)):
+        new_box = []
+        for j in range(4):
+            new_box.append(int(box1[j] + (box2[j] - box1[j]) / num_image * i))
+        new_boxes.append(new_box)
+    return new_boxes
+
+
+def bounding_box_selector(num_image: int, boxes: list[list[int, int, int, int]]) -> list[list[int, int, int, int]]:
+
+    if num_image < len(boxes):
+        raise ValueError(f"Number of images {num_image} is smaller than the number of boxes {len(boxes)}")
+    
+    new_boxes = []
+    len_boxes = int(len(boxes))
+    for i in range(len_boxes):
+        if i == len_boxes - 1:
+            i = -1
+        new_boxes += transition(num_image/len_boxes, boxes[i], boxes[i+1])
+
+    for i in new_boxes:
+        print(i)
+
+    return new_boxes
 
 def batch():
     import os
     device = select_device()
     model = load_model(device=device, prompt_type="box")
-    directory = "../neat/scenes/Pepper/projections/"
-    for file in sorted(os.listdir(directory)):
+    directory = "../teapod_png/"
+    new_boxes = bounding_box_selector(int(12), [[855, 475, 1074, 556], [1187, 480, 1304, 580], [847, 494, 1056, 593], [620, 483, 740, 583]])
+    files = sorted(os.listdir(directory))
+    files = [file for file in files if file.endswith(".png") or file.endswith(".jpg") or file.endswith(".jpeg") or file.endswith(".tif") or file.endswith(".tiff")]
+    for i, file in enumerate(files):
         if os.path.isdir(directory + file):
             continue
+
         print(f"----------\nProcessing {file}")
         img_embed, height, width = generate_image_embedding(image_path = directory + file, medsam_model=model, device=device)
-        sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=[654, 385, 1150, 875], width=width, height=height)
+        sparse_embeddings, dense_embeddings = generate_box_prompt_embedding(medsam_model=model, box=new_boxes[i], width=width, height=height)
         # sparse_embeddings, dense_embeddings = generate_text_prompt_embedding(token="liver", model=model)
         seg = infer(medsam_model=model, img_embed=img_embed, sparse_embeddings=sparse_embeddings, dense_embeddings=dense_embeddings, height=height, width=width)
 
-        out_path = directory + "/out/"
-        if not os.path.exists(out_path):
-            os.mkdir(out_path)
-        # mask = mask_image(mask=seg,path= out_path + file + "segmented.tif", save_image=True)
-        # overlay_mask(pil_mask=mask, image_path=directory + file)
+        path = directory + "/out/"
+        if not os.path.exists(path):
+            os.makedirs(path)
+        mask = mask_image(mask=seg, path=path + file + f"{i}mask_segmented.tif", save_image=True)
+        overlay_mask(pil_mask=mask, image_path=directory + file, output_path= directory + "/out/" + file + f"{i}segmented.tif", save_image=True)
 
 if __name__ == "__main__":
     batch()
     # main()
-
