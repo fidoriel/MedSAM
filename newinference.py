@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from hmac import new
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageChops, ImageEnhance
 from matplotlib import pyplot as plt
 
 import torch
@@ -63,45 +63,27 @@ def mask_image(mask: np.ndarray, path: str | None = None, save_image: bool = Fal
     return img
 
 def overlay_mask(pil_mask: Image.Image, image_path: str, output_path: str | None = None,  save_image: bool = False) -> Image.Image:
-    print(f"Saving overlayed mask image to {output_path}")
-    original_image = Image.open(image_path)
-    print(f"Original image size: {original_image.size} pixels {original_image.mode} mode")
+    pil_mask.save("mask.png")
 
+    original_image = Image.open(image_path).convert("RGBA")
 
-    # it is likely that some modes will break the code, and need to be added if they do
-    if original_image.mode == "L":
-        print(f"Before conversion {original_image.mode} mode")
-        original_image = Image.merge("RGB", [original_image]*3)
-        original_image.putalpha(255)
-    elif original_image.mode in ["I", "I;16", "I;32"]:
-        print(f"Before conversion {original_image.mode} mode")
-        max_val = max(original_image.getextrema())
-        scale_factor = 255.0 / max_val
-        scaled_image = original_image.point(lambda i: i * scale_factor)
-        original_image = scaled_image.convert('L').convert('RGBA')
-    else:
-        original_image = original_image.convert("RGBA")
+    red_mask = Image.new("RGBA", pil_mask.size, (255, 0, 0, 128))
 
-    mask_image = pil_mask.convert("RGBA")
+    for x in range(pil_mask.size[0]):
+        for y in range(pil_mask.size[1]):
+            if pil_mask.getpixel((x, y)) == 65535:
+                red_mask.putpixel((x, y), (0, 0, 0, 0))
 
-    if mask_image.size != original_image.size:
-        mask_image = mask_image.resize(original_image.size)
+    # Create a new image by blending the original image and the mask
+    overlay = Image.blend(original_image, red_mask, alpha=0.2)
 
-    combined_image = Image.alpha_composite(original_image, mask_image)
-    combined_image = combined_image.convert("L")
-
-    grayscale_array_8bit = np.array(combined_image)
-    grayscale_array_16bit = (grayscale_array_8bit.astype(np.uint16)) * 256
-    grayscale_image_16bit = Image.fromarray(grayscale_array_16bit, mode='I;16')
-
-    print(f"After conversion {grayscale_image_16bit.mode} mode")
 
     if save_image:
         if output_path is None:
-            raise ValueError("image_path cannot be None if save_image is True")
-        grayscale_image_16bit.save(output_path)
-    return grayscale_image_16bit
-
+            raise ValueError("Output path cannot be None if save_image is True")
+        overlay.save(output_path)
+    
+    return overlay
 
 def generate_image_embedding(image_path: str, medsam_model: torch.nn.Module, device: torch.device) -> (torch.Tensor, int, int):
     print(f"Loading image from {image_path}")
@@ -401,7 +383,7 @@ def transition(num_image: int, box1: list[int, int, int, int], box2: list[int, i
     return new_boxes
 
 
-def bounding_box_selector(num_image: int, boxes: list[list[int, int, int, int]]) -> list[list[int, int, int, int]]:
+def _bounding_box_selector(num_image: int, boxes: list[list[int, int, int, int]]) -> list[list[int, int, int, int]]:
 
     if num_image < len(boxes):
         raise ValueError(f"Number of images {num_image} is smaller than the number of boxes {len(boxes)}")
@@ -418,12 +400,22 @@ def bounding_box_selector(num_image: int, boxes: list[list[int, int, int, int]])
 
     return new_boxes
 
+def bounding_box_selector(num_image: int, boxes: dict[int, list[int, int, int, int]]) -> list[list[int, int, int, int]]:
+    b = []
+    striking = [(i, b) for i, b in boxes.items()]
+    for i in range(len(striking) - 1):
+        b += _bounding_box_selector(striking[i+1][0] - striking[i][0], [striking[i][1], striking[i+1][1]])
+    return b
+
 def batch():
     import os
     device = select_device()
     model = load_model(device=device, prompt_type="box")
-    directory = "../teapod_png/"
-    new_boxes = bounding_box_selector(int(12), [[855, 475, 1074, 556], [1187, 480, 1304, 580], [847, 494, 1056, 593], [620, 483, 740, 583]])
+    directory = "./slices/"
+    striking = {0: [ 94, 276, 138, 324], 48: [58, 251, 164, 361], 55: [ 54, 237, 171, 368], 109: [ 89, 290, 174, 338]}
+    # striking = {0: [441, 128, 947, 635], 13: [441, 128, 947, 635]}
+    new_boxes = bounding_box_selector(int(14), striking)
+    print(sorted(os.listdir(directory)))
     files = sorted(os.listdir(directory))
     files = [file for file in files if file.endswith(".png") or file.endswith(".jpg") or file.endswith(".jpeg") or file.endswith(".tif") or file.endswith(".tiff")]
     for i, file in enumerate(files):
